@@ -4,12 +4,15 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -66,4 +69,34 @@ func geraCertificadoSeNecessario() (certPEM, keyPEM []byte, err error) {
 
 	fmt.Println("certificado gerado")
 	return certPEM, keyPEM, nil
+}
+
+func handleClient(rawConn net.Conn, tlsConfig *tls.Config, safeMode bool) {
+	addr := rawConn.RemoteAddr()
+	n := atomic.AddInt64(&activeHandshakes, 1)
+
+	fmt.Printf("nova conexão de %s, total de %d ativos", addr, n)
+
+	start := time.Now()
+
+	defer func() {
+		atomic.AddInt64(&activeHandshakes, -1)
+		rawConn.Close()
+	}()
+
+	if safeMode {
+		// defesa: um timeout agressivo especificamente para o handshake
+		rawConn.SetDeadline(time.Now().Add(3 * time.Second))
+	}
+
+	tlsConn := tls.Server(rawConn, tlsConfig)
+	err := tlsConn.Handshake()
+	elapsed := time.Since(start)
+
+	if err != nil {
+		fmt.Printf("%s falhou/timeout apos %s (%v)\n", addr, elapsed, err)
+		return
+	}
+
+	fmt.Printf("handshake completo com %s em %s\n", addr, elapsed)
 }

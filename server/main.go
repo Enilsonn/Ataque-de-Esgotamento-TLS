@@ -8,10 +8,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"flag"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -99,4 +102,51 @@ func handleClient(rawConn net.Conn, tlsConfig *tls.Config, safeMode bool) {
 	}
 
 	fmt.Printf("handshake completo com %s em %s\n", addr, elapsed)
+}
+
+func main() {
+	safe := flag.Bool("safe", false, "ativa timeout de handshake")
+	flag.Parse()
+
+	certPem, keyPem, err := geraCertificadoSeNecessario()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cert, err := tls.X509KeyPair(certPem, keyPem)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+
+	modo := "VUNERAVEL"
+	if *safe {
+		modo = "SAFE"
+	}
+
+	fmt.Printf("servidor TLS rodando em %s:%s — modo: %s\n", host, port, modo)
+
+	var wg sync.WaitGroup
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Printf("erro ao aceitar conexão: %w", err)
+			continue
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			handleClient(conn, tlsConfig, *safe)
+		}()
+	}
 }
